@@ -1,6 +1,25 @@
-const http = require('http');
-
 const Alexa = require('ask-sdk-core');
+const { LambdaClient, InvokeCommand } = require('@aws-sdk/client-lambda');
+const { functionName, awsRegion } = require('./config.js');
+
+const client = new LambdaClient({ region: awsRegion });
+
+const invokeLambda = async (params) => {
+  return await client.send(new InvokeCommand({
+    FunctionName: functionName,
+    Payload: Buffer.from(JSON.stringify(params)),
+  }));
+};
+
+const fixRawThingName = (rawStr) => {
+  let thing = rawStr;
+
+  if (thing.substr(0,4) === 'the ') {
+    thing = thing.substr(4);
+  }
+
+  return thing;
+}
 
 const LaunchRequestHandler = {
   canHandle(handlerInput) {
@@ -32,49 +51,18 @@ const HelloWorldIntentHandler = {
   }
 };
 
-const fetchCurrentTotal = (countedThingName) => {
-  return new Promise((resolve, reject) => {
-
-    const req = http.get(`http://jdunk.com:2001/get/${countedThingName}`, (resp) => {
-      let respBody = '';
-
-      resp.on('data', d => {
-        respBody += d;
-      });
-      resp.on('end', () => {
-        resolve(respBody);
-      });
-    });
-
-    req.on('error', error => {
-      console.error(error);
-      reject(error);
-    });
-
-    req.end();
+const fetchCurrentTotal = async (thingName) => {
+  return await invokeLambda({
+    action: 'get',
+    thing: thingName,
   });
 };
 
-const makeAddRequest = (num, countedThingName) => {
-  return new Promise((resolve, reject) => {
-
-    const req = http.get(`http://jdunk.com:2001/add/${num}/${countedThingName}`, (resp) => {
-      let respBody = '';
-
-      resp.on('data', d => {
-        respBody += d;
-      });
-      resp.on('end', () => {
-        resolve(respBody);
-      });
-    });
-
-    req.on('error', error => {
-      console.error(error);
-      reject(error);
-    });
-
-    req.end();
+const makeAddRequest = async (num, thingName) => {
+  return await invokeLambda({
+    action: 'add',
+    thing: thingName,
+    num,
   });
 };
 
@@ -84,19 +72,26 @@ const GetIntentHandler = {
       && handlerInput.requestEnvelope.request.intent.name === 'GetIntent';
   },
   async handle(handlerInput) {
-    const thingName = handlerInput.requestEnvelope.request.intent.slots.countedThing.value;
+    const thingName = fixRawThingName(handlerInput.requestEnvelope.request.intent.slots.countedThing.value);
     const resp = await fetchCurrentTotal(thingName);
-    let objResp;
     let speechText;
 
-    if (!resp || ! (objResp = JSON.parse(resp)) || ! ('count' in objResp)) {
-      speechText = 'An error was encountered. Please try again later.';
+    const respDataStr = resp?.Payload && Buffer.from(resp?.Payload, 'base64').toString();
+    let respData;
+
+    try {
+      respData = respDataStr && JSON.parse(respDataStr);
+    }
+    catch(e) {} // Handled below
+
+    const respCount = respData?.body?.data?.count;
+
+    if (!respCount && respCount !== 0) {
+      speechText = 'An error occurred for the get intent. You may want to try again later.';
     }
     else {
-      speechText = `The current ${thingName} total is ${objResp.count}`;
+      speechText = `The ${thingName} total is ${respCount}.`;
     }
-
-console.log({ resp: JSON.parse(resp) });
 
     return handlerInput.responseBuilder
       .speak(speechText)
@@ -131,14 +126,21 @@ const AddIntentHandler = {
 
     const resp = await makeAddRequest(num, thingName);
 
-    let objResp;
-    let speechText;
+    const respDataStr = resp?.Payload && Buffer.from(resp?.Payload, 'base64').toString();
+    let respData;
 
-    if (!resp || ! (objResp = JSON.parse(resp)) || ! ('count' in objResp)) {
-      speechText = 'An error occurred. Please try again later.';
+    try {
+      respData = respDataStr && JSON.parse(respDataStr);
+    }
+    catch(e) {} // Handled below
+
+    const respCount = respData?.body?.data?.count;
+
+    if (!respCount) {
+      speechText = 'An error occurred for the add intent. You may want to try again later.';
     }
     else {
-      speechText = `Done. The ${thingName} total is now ${objResp.count}`;
+      speechText = `Done. The ${thingName} total is now ${respCount}.`;
     }
 
     return handlerInput.responseBuilder
