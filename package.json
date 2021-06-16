@@ -9,6 +9,7 @@
   "author": "Jared Duncan",
   "license": "ISC",
   "dependencies": {
+    "@aws-sdk/client-lambda": "^3.18.0",
     "ask-sdk": "^2.10.0"
   }
 }
